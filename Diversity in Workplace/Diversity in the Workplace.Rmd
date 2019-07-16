@@ -1,7 +1,7 @@
 ---
-title: "Diversity in the Workplace"
+title: 'Diversity in the Workplace'
 author: "Siddhartha Jetti"
-date: "May 30, 2019"
+date: "5/30/2019"
 output: rmarkdown::github_document
 ---
 
@@ -246,6 +246,7 @@ rf.fit2
 # Visualize Important variables
 varImpPlot(rf.fit2)
 ```
+
 After dropping the dept variable, the variance explained drops dramatically. So rf.fit is indeed optimal model.
 
 # Question 3:

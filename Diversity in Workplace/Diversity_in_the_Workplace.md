@@ -1,7 +1,7 @@
 Diversity in the Workplace
 ================
 Siddhartha Jetti
-May 30, 2019
+5/30/2019
 
 # Goal
 
@@ -388,10 +388,10 @@ rf.fit
     ##                      Number of trees: 250
     ## No. of variables tried at each split: 3
     ## 
-    ##           Mean of squared residuals: 5351756769
-    ##                     % Var explained: 32.72
-    ##                        Test set MSE: 5462758437
-    ##                     % Var explained: 30.33
+    ##           Mean of squared residuals: 5414222079
+    ##                     % Var explained: 31.95
+    ##                        Test set MSE: 5303848842
+    ##                     % Var explained: 32.3
 
 ``` r
 # Visualize Important variables
@@ -418,10 +418,10 @@ rf.fit2
     ##                      Number of trees: 250
     ## No. of variables tried at each split: 3
     ## 
-    ##           Mean of squared residuals: 7892747518
-    ##                     % Var explained: 0.78
-    ##                        Test set MSE: 7934348292
-    ##                     % Var explained: -1.2
+    ##           Mean of squared residuals: 7977232438
+    ##                     % Var explained: -0.27
+    ##                        Test set MSE: 7746336367
+    ##                     % Var explained: 1.12
 
 ``` r
 # Visualize Important variables
@@ -429,6 +429,7 @@ varImpPlot(rf.fit2)
 ```
 
 ![](Diversity_in_the_Workplace_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
+
 After dropping the dept variable, the variance explained drops
 dramatically. So rf.fit is indeed optimal model.
 

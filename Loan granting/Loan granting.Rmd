@@ -1,0 +1,371 @@
+---
+title: 'Loan granting'
+author: "Siddhartha Jetti"
+date: "6/6/2019"
+output: rmarkdown::github_document
+---
+
+# Goal
+
+Another area where data science and machine learning play a huge role is in choosing if granting a loan. This is a particularly hot field as many start-ups feel that bank loan models can be improved. Therefore, there is space to come up with better loaning strategies that can benefit both the lender and the borrower.
+
+In this challenge, you will have access to loan data from a bank and will have to improve their model.
+
+# Challenge Description
+
+We have access to a specific bank loan data. We have data about all loans asked to the bank, whether the bank decided to grant it and, finally, whether the borrower managed to repay it. We also have info about the person asking for the loan at the moment she is asking for the loan.
+
+You have to come up with a better strategy to grant loans. Specifically you should:
+
+Build a model which is better than the bank model. Assume that: 
+If you grant the loan and the it doesn’t get repaid, you lose 1.
+If you grant the loan and the it does get repaid, you gain 1
+If you don’t grant the loan, you gain 0.
+
+Using the rules above, compare bank profitability vs your model profitability.
+
+* Describe the impact of the most important variables on the prediction. Also, focus on the variable “is_employed”, which describes whether the borrower is employed when she asks for the loan. How does this variable impact the model? Explain why.
+
+* Are there any other variables you’d like to include in the model?
+
+# Data
+
+We have 2 table downloadable by clicking here.
+
+The 2 tables are:
+
+loan_table - general information about the loan
+
+### Columns:
+
+* loan_id : the id of the loan. Unique by loan. Can be joined to loan id in the other table
+* loan_purpose : the reason for asking the loan: investment, other, business, emergency_funds, home
+* date : when the loan was asked
+* loan_granted : whether the loan was granted
+* loan_repaid : whether the loan was repaid. NA means that the loan was not granted
+
+borrower_table - information about the borrower
+
+### Columns:
+
+* loan_id : the id of the the loan. Unique by loan. Can be joined to loan id in the other table
+* is_first_loan : did she ask for any other loans in her lifetime?
+* fully_repaid_previous_loans : did she pay on time all of her previous loans? If this is the first loan, it is NA
+* currently_repaying_other_loans : is she currently repaying any other loans? If this is the first loan, it is NA
+* total_credit_card_limit : total credit card monthly limit
+* avg_percentage_credit_card_limit_used_last_year : on an average, how much did she use of her credit card limit in the previous 12 months. This number can be >1 since it is possible to go above the credit card limit
+* saving_amount : total saving amount balance when she asked for the loan
+* checking_amount : total checking amount balance when she asked for the loan
+* is_employed : whether she is employed (1) or not (0)
+* yearly_salary : how much she earned in the previous year
+* age : her age
+* dependent_number : number of people she claims as dependent
+
+
+# Problem Setup
+
+```{r}
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(randomForest)
+library(ROCR)
+
+# Read in the input data into a dataframe
+borrower <- read.csv("borrower_table.csv")
+loan <- read.csv("loan_table.csv")
+```
+
+
+# Question 1:
+
+Understanding and transforming the data
+```{r}
+# Joining both loan and borrower tables. Transform variables to right format
+data <- loan %>%
+  inner_join(borrower, by = "loan_id") 
+
+# Take a peak at the data
+str(data)
+summary(data)
+```
+
+Check for missing values in the data.
+
+```{r}
+# count of missing values by column in the merged data
+colSums(is.na(data))
+
+# is there a pattern in missing values?
+data %>%
+  filter(is.na(loan_repaid)) %>%
+  select(loan_granted) %>%
+  distinct()
+
+data %>%
+  filter(is.na(fully_repaid_previous_loans) | is.na(currently_repaying_other_loans)) %>%
+  select(is_first_loan) %>%
+  distinct()
+
+data %>%
+  filter(is.na(avg_percentage_credit_card_limit_used_last_year)) %>%
+  select(total_credit_card_limit) %>%
+  distinct()
+```
+
+Clearly, There is a pattern in missing values and are not occuring at random.
+
+Missing values exist in 'fully_repaid_previous_loans' and 'currently_repaying_other_loans' variables only for the customers who are applying for the first loan. The variable 'loan_repaid' is missing only for customers who are not granted a loan. Also, 'avg_percentage_credit_card_limit_used_last_year' is missing only for customers whose credit limit is zero. All this makes sense.
+
+Imputation for missing values is required.
+```{r}
+data %>%
+  select(loan_repaid, fully_repaid_previous_loans, currently_repaying_other_loans, avg_percentage_credit_card_limit_used_last_year) %>%
+  head()
+```
+
+Three of the above variables are discrete and one is continuous. 
+Due to the non-random nature of missing values, new category should be created for missing values in categorical variables and a very high number is imputed for missing values in continuous variables.
+
+```{r}
+data <- data %>%
+  mutate(fully_repaid_previous_loans = as.factor(ifelse(is.na(fully_repaid_previous_loans), -1, fully_repaid_previous_loans)),
+         currently_repaying_other_loans = as.factor(ifelse(is.na(currently_repaying_other_loans), -1, currently_repaying_other_loans)),
+         avg_percentage_credit_card_limit_used_last_year = ifelse(is.na(avg_percentage_credit_card_limit_used_last_year), 9999, avg_percentage_credit_card_limit_used_last_year),
+         is_employed = as.factor(is_employed),
+         is_first_loan = as.factor(is_first_loan))
+```
+
+Estimating the bank profitability based on existing lending policy. 
+
+```{r}
+data %>%
+    transmute(profitability = ifelse(loan_granted == 0, 0, loan_repaid*(loan_granted + 1) - 1)) %>%
+    summarize(profit = sum(as.numeric(profitability)))
+    
+```
+
+The bank profit based on the gain/loss rules is 13758.
+
+```{r}
+summary(data)
+```
+
+After Imputation, no missing values exist in the dataset other than loan_repaid variable.
+
+Run descriptive stats on the input data. Clearly, variables if employed, saving_amount and salary appear to matter to determine the probability of repayment of the loan.
+
+Check if_employed vs loan_repaid
+```{r}
+
+is_employed_data <- data %>%
+  filter(loan_granted == 1) %>%
+  mutate(loan_repaid = as.factor(loan_repaid)) %>%
+  group_by(is_employed,loan_repaid) %>%
+  summarize(counts = n())
+
+ggplot(data = is_employed_data, aes(x = is_employed, y = counts, fill = loan_repaid))+
+  geom_bar(stat = "identity")
+
+```
+
+Clearly, Among the loans taken by employed majority of them are repaid, which makes sense.
+Check how salary effects loan repaid variable.
+```{r}
+employed_data <- data %>%
+  group_by(loan_repaid) %>%
+  summarise(mean_yearly_salary = mean(yearly_salary),
+            mean_savings = mean(saving_amount))
+
+
+ggplot(data = employed_data, aes(x = loan_repaid, y = mean_yearly_salary))+
+       geom_bar(stat = "identity")
+
+ggplot(data = employed_data, aes(x = loan_repaid, y = mean_savings))+
+       geom_bar(stat = "identity")
+```
+
+The above plots reveal that loans that are repaid, reported on an average higher savings balance and higher yearly salary than the loans that are not repaid.
+
+# Model Building 
+
+The gain or loss rules are as follows
+* If loan is granted and does not get repaid, loss 1.
+* If loan is granted and gets repaid, gain 1.
+* If loan is not granted, gain 0.
+
+Lets build a model to estimate probability of repayment of loan and eventually predict if loan gets repaid or not. Random forest would be a good candidate as it is strong with outliers and works well with correlated, continuous and discrete variables. Also, random forest is easier to optimize parameters.Partial dependence plots can be used to capture insights from the model. 
+
+Define the class 0 as loan not getting repaid and class 1 as loan getting repaid. The goal is to build random forest model and find optimal cuttoff probability that maximizes profit based on the above rules. The loan will be granted only if estimated probability of repayment is more than chosen cuttoff else the loan gets denied.
+
+* False positive, FP results in -1
+* True positive, TP results in +1
+* False negative, FN results in 0
+* True negative, TN results in 0
+
+The model should be built using only the rows where loans are granted as we know if loan is eventually repaid or not. The rows where loan not granted are excluded  from the training sample. A standard 66-33% split can be used to generate training and test datasets. If training dataset is not large enough then cross validation can be used to arrive at the optimum parameters
+
+```{r}
+
+# save loans that are denied by bank for future use
+loans_denied <- data %>%
+  filter(loan_granted == 0)
+
+# Training and test set split
+data <- data %>%
+  filter(loan_granted == 1) %>%
+  select(-loan_id, -date, -loan_granted) %>%
+  mutate(loan_repaid = as.factor(loan_repaid))
+
+set.seed(2019)
+train_sample = sample(nrow(data), size = round(nrow(data)*0.66))
+train_data = data[train_sample,]
+test_data = data[-train_sample,]
+
+# Build Random forest model on the data with mostly default settings except for class weight and #trees
+rf.fit <- randomForest(y = train_data$loan_repaid, x = train_data[,-c(2)], ytest = test_data$loan_repaid, 
+                       xtest = test_data[,-c(2)],  ntree = 250, mtry = 4, keep.forest = TRUE)
+
+rf.fit
+# Visualize Important variables
+varImpPlot(rf.fit)
+```
+
+From the variable importance plot, Variables 'saving_amount' and 'checking_amount' have too much importance compared with other variables. This is happening because those variables are acting as a proxy for other variables and have in them part of the information from other variables. Lets rebuild the model by removing these to see how it changes the variable importance.
+
+```{r}
+# Build Random forest model on the data with mostly default settings except for class weight and #trees
+# without the top variables
+rf.fit2 <- randomForest(y = train_data$loan_repaid, x = train_data[,-c(2,8,9)], ytest = test_data$loan_repaid, 
+                       xtest = test_data[,-c(2,8,9)],  ntree = 250, keep.forest = TRUE)
+
+rf.fit2
+# Visualize Important variables
+varImpPlot(rf.fit2)
+```
+
+
+Overall error rate, class 0 error rate and class 1 error rate look decent. The model can be used for insights. Also, training and test error are close indicating that model is not overfitting to data.
+
+```{r}
+# Order variables by importance
+imp_vars <- importance(rf.fit)
+pdp_vars <- names(sort(imp_vars[,1], decreasing = T))
+
+# Loop through variables and build PDP in the decreasing order of variable importance
+for (i in seq_along(pdp_vars)) {
+  partialPlot(rf.fit, data[,-2], pdp_vars[i], xlab="",
+              main=paste("Partial Dependence on", pdp_vars[i]), which.class=1)
+}
+
+```
+
+# Question 2
+
+Now finding the cuttoff probability that maximizes the profit.
+```{r}
+#Compare predictions (votes) vs actual results for the test set
+pred = prediction(rf.fit$test$votes[,2], test_data$loan_repaid)
+
+error_cutoff = data.frame (pred@cutoffs,
+                           pred@tn,
+                           pred@fn,
+                           pred@fp,
+                           pred@tp, 
+                           row.names = NULL)
+colnames(error_cutoff) = c("cutoff", "tn", "fn", "fp", "tp")
+
+error_cutoff <- error_cutoff %>%
+  mutate(profit = tp-fp) %>%
+  arrange(desc(profit))
+
+error_cutoff[1,]
+```
+
+The cuttoff probability of 0.52 results in maximum profit based on the gain/loss rules.
+Now use the model "rf.fit" and the above cuttoff to score the all the loans where bank originally granted loans and compare the profit with bank's profit.
+
+```{r}
+repayment_prob <- predict(rf.fit, data[,-2], type = "prob")
+loan_status <- ifelse(repayment_prob[,2] > 0.52, 'Grant', 'Deny')
+
+# Number of loans granted or denied
+table(loan_status)
+
+# Among the granted ones, how many would be repaid or not repaid
+repay_status <- data$loan_repaid[which(loan_status == 'Grant')]
+status <- table(repay_status)
+
+# Profit with new model
+status[2] - status[1]
+```
+
+Among the 47654 loans granted by bank, the new model would only grant 30402 loans and deny 17252 loans.
+Out of the granted 30402 loans, 29899 would be repaid and 503 would not be repaid. This results in a total gain of 29396 much higher than bank's profit of 13758.
+
+The new model reveals that to get maximum profit, the bank should grant loans only if the repayment probability predicted by it is more than 52%.
+
+Now use the new model to score the loans that were denied by the bank.
+```{r}
+loans_denied_repayment <- predict(rf.fit, loans_denied[,-c(1,3,4,5)], type = "prob")
+loan_status <- ifelse(loans_denied_repayment[,2] > 0.52, 'Grant', 'Deny')
+
+table(loan_status)
+```
+The fact that bank denied these loans should indicate that they are bad loans with low probability of repayment. Not suprisingly, new model would deny 65% of these loans and grant only 35% of them.
+
+# Question 3
+
+The following conclusions can be drawn from the variable importance plot and Partial dependence plots of the full model "rf.fit".
+
+* The variables savings amount  and checking amount appear to dominate other variables in terms of variable importance. It is likely that these variables are correlated and acting as a proxy for other variables and have in them part of the information from other variables as well.
+
+* The variable "is_employed" which appeared to be an important variable in descriptive stats appears to have very low importance in the combined model. This is counter intuitive because people who are employed have steady cash flow and are expected to have higher chance of repayment. This can be explained from the fact that is_employed is highly correlated with savings/checking amount and perfectly correlated with yearly salary. Also, banks offer higher credit limits for employed people. Generally people who are employed tend to have higher saving/checking balance,yearly salary and credit limit than people who are not. After controlling for the saving/checking amount, yearly salary and credit limit variables, there is not much information left to be extracted from is_employed and its importance appears low. The following plots provide evidence in favor of the above hypothesis.
+
+```{r}
+employed_data <- data %>%
+  group_by(is_employed) %>%
+  summarise(mean_yearly_salary = mean(yearly_salary),
+            mean_savings = mean(saving_amount),
+            mean_checking = mean(checking_amount),
+            mean_credit_limit = mean(total_credit_card_limit))
+employed_data
+
+# Relation between is_employed and yearly salary
+ggplot(data = employed_data, aes(x = is_employed, y = mean_yearly_salary))+
+       geom_bar(stat = "identity")
+
+# Relation between is_employed and mean savings amount
+ggplot(data = employed_data, aes(x = is_employed, y = mean_savings))+
+       geom_bar(stat = "identity")
+
+# Relation between is_employed and mean checking
+ggplot(data = employed_data, aes(x = is_employed, y = mean_checking))+
+       geom_bar(stat = "identity")
+
+# Relation between is_employed and mean credit limit
+ggplot(data = employed_data, aes(x = is_employed, y = mean_credit_limit))+
+       geom_bar(stat = "identity")
+
+```
+
+* People with higher saving/checking amount, higher credit limit and higher salary perform better in terms of loan repayment.
+
+* People who are currently repaying other loans appear to have lower chance of repayment than people who are not currently repaying as they have higher financial burden.
+
+* The chance of repayment appear to be highest in middle aged people roughly around 40 yrs and appears to drop after.
+
+* Loans for emergency funds appear to be less likely to be repaid than loans taken for business or investment purpose.
+
+* People with more number of dependents are less likely to repay than people with fewer dependents.
+
+* People who repaid loans fully in the past appear to have higher chances of repaying the loans again.
+
+* After controlling for all the other variables, is first loan variable does not appear to matter much.
+
+
+# Question 4
+
+Suprisingly, the data provided for this exercise lacks a critical variable like loan amount (amount they are seeking through the loan). If loan amount is very high then it could make even a credit worthy person to look bad and get denied on the loan. I would include this variable in the model.
+
+Another variable that is not provided is the total existing debt (all kinds) each person has. This variable is important because higher debt would cause higher financial burden which could affect the chance of repayment.

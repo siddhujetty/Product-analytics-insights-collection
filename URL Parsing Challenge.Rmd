@@ -1,8 +1,6 @@
 ---
 title: 'URL Parsing Challenge'
 author: "Siddhartha Jetti"
-date: "7/14/2019"
-output: html_document
 ---
 
 # Goal

@@ -1,0 +1,281 @@
+---
+title: 'JSON City Similarities'
+author: "Siddhartha Jetti"
+date: "6/30/2019"
+output: rmarkdown::github_document
+---
+
+# Goal
+
+This is another challenge where your data is stored in a JSON file. Each row in this JSON stores info about all user searches within a session.
+
+Analyzing user behavior within the same session is often crucial. Clustering users based on their browsing behavior is probably the most important step if you want to personalize your site.
+
+The goal of this challenge is to build the foundation of personalization by identifying searches likely to happen together and cluster users based on their session searches.
+
+# Challenge Description
+
+Company XYZ is a Online Travel Agent site, such as Expedia, Booking.com, etc.
+
+They store their data in JSON files. Each row in the json shows all different cities which have been searched for by a user within the same session (as well as some other info about the user). That is, if I go to expedia and look for hotels in NY and SF within the same session, the corresponding JSON row will show my user id, some basic info about myself and the two cities.
+
+You are given the following tasks:
+
+1) There was a bug in the code and one country didn’t get logged. It just shows up as an empty field (“”). Can you guess which country was that? How?
+
+2) For each city, find the most likely city to be also searched for within the same session.
+
+3) Travel sites are browsed by two kinds of users. Users who are actually planning a trip and users who just dream about a vacation. The first ones have obviously a much higher purchasing intent. 
+Users planning a trip often search for cities close to each other, while users who search for cities far away from each other are often just dreaming about a vacation. That is, a user searching for LA, SF and Las Vegas in the same session is much more likely to book a hotel than a user searching for NY, Paris, Kuala Lumpur (makes sense, right?). 
+Based on this idea, come up with an algorithm that clusters sessions into two groups: high intent and low intent. Explain all assumptions you make along the way.
+
+
+# Data
+
+The file is
+
+city_searches - a list of searches happening within the same session
+
+## Fields:
+
+* session_id : session id. Unique by row
+* unix_timestamp : unixtime stamp of when the session started
+* cities : the unique cities which were searched for within the same session by a user
+* user : it is has the following nested fields: 
+* user_id: the id of the user
+* joining_date: when the user created the account
+* country: where the user is based
+
+
+# Problem Setup
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(jsonlite)
+library(lubridate)
+library(ggplot2)
+
+# Read in the input data into a dataframe
+data_json <- fromJSON("city_searches.json")
+```
+
+
+# Question 1:
+
+Transforming the JSON data into a data frame
+```{r}
+session_id <- c()
+unix_timestamp <- c()
+cities <- c()
+user_id <- c()
+joining_date <- c()
+country <- c()
+
+# Converting the data in the right format
+for(i in 1:length(data_json$user)){
+  session_id <- c(session_id, data_json$session_id[[i]])
+  unix_timestamp <- c(unix_timestamp, data_json$unix_timestamp[[i]])
+  cities <- c(cities, data_json$cities[[i]])
+  user_id <- c(user_id, data_json$user[[i]][[1]][[1]])
+  joining_date <- c(joining_date, data_json$user[[i]][[1]][[2]])
+  country <- c(country, data_json$user[[i]][[1]][[3]])
+}
+
+# Convert to a data frame
+data <- data.frame(session_id = session_id, unix_timestamp = unix_timestamp, cities = cities,
+                    user_id = user_id, joining_date = joining_date, country = country, stringsAsFactors = F) %>% 
+  mutate(country = ifelse(country == "", "Missing", country))
+
+# Check data types of each of the columns
+summary(data)
+
+# check if any duplicate session id exist
+length(data$session_id) == length(unique(data$session_id))
+
+# Check if any missing values exist
+colSums(is.na(data) | data == "")
+
+```
+There are no missing values in input data. Also, session id appears to be unique.
+
+```{r}
+# Obtain Time and Hour of day from the time stamp
+data <- data %>% 
+  mutate(time = as.POSIXct(unix_timestamp, origin = "1970-01-01"), hour = hour(time))
+
+head(data)
+```
+
+Visualizing the data. Ploting the number of searches by hour of day for each of the user countries.
+```{r}
+
+countries <- unique(data$country)
+
+for(i in countries){
+  data_country <- data %>%
+    filter(country == i) %>%
+    group_by(hour) %>%
+    summarise(sessions = n())
+
+plot <- ggplot(data = data_country, aes(x = hour, y = sessions)) +
+  geom_bar(stat = "identity") +
+  ggtitle(paste("Sessions by hour of day in", i, sep=' '))
+
+print(plot)
+}
+
+```
+
+
+It looks like Unix time stamp is based on one of the time zones in US. 
+
+From the sessions Vs Hour of day histogram in US, it is clear that peak traffic is between 10 AM and 2PM. 
+By assuming similar distribution of sessions by hour of day in the missing country, The session Vs hour histogram for Missing country reveals that local time differs by about 11-12 hrs from US. This hints that the missing country could be in Asia and most likely India or China.
+
+# Question 2:
+
+Each city can be imagined as a point in the n-dimensional space spun by user sessions. Each coordinate of the point(n-dimensional) would be the number of searches of the city in the session corresponding to the cordinate. The goal her is to build city similarity matrix and extract the most similar city to each of the city searched. The most similar cities are more likely to be searched together in a session than ones that are not.
+
+```{r}
+
+# Find the maximum number of cities in a given session
+# This is done by counting the occurences of "," + 1
+max_cities <- max(str_count(data$cities, ",")) + 1
+
+user_city_matrix <- data %>%
+  separate(col = cities, into = paste0("city", 1:max_cities), sep = ", ") %>%
+  select(-user_id, -joining_date, -country, -time,-hour, -unix_timestamp) %>%
+  gather(key = "value", value = "cities", -session_id) %>%
+  filter(!is.na(cities)) %>%
+  group_by(session_id, cities) %>%
+  summarise(nsearches = n()) %>%
+  ungroup() %>%
+  spread(cities, nsearches) %>%
+  mutate_all(funs(replace_na(., 0)))
+
+# n-dimensional space
+dim(user_city_matrix)
+
+# Take a peek at data
+head(user_city_matrix)
+```
+Each city is a point in 20022 dimensions and each cordinate is number of searches on that city in that session.
+Cosine similarity is used to compute similarity between two cities. Most similar cities have cosine similarity close to 1 and least similar have similarity close to 0.
+
+```{r}
+
+user_city_matrix <- user_city_matrix %>%
+  select(-session_id)
+
+unique_cities <- colnames(user_city_matrix)
+
+# Define a function to compute the cosine similarity between two cities
+cosine_similarity <- function(x, y) { 
+  sum(x * y) / (sqrt(sum(x * x)) * sqrt(sum(y * y)))
+  }
+
+# Define a place holder to hold similarity between each pair of cities
+# similarity between a city and itself is 1
+city_similarity  <- diag(1, nrow = ncol(user_city_matrix), ncol = ncol(user_city_matrix))
+rownames(city_similarity) <- unique_cities 
+colnames(city_similarity) <- unique_cities
+
+ncity <- ncol(user_city_matrix)
+```
+
+Now, compute the pair-wise city smilarities and populate the city similarity matrix.
+```{r}
+# Generate city similarity matrix 
+# Loop through the columns
+for(i in 1:ncity) {
+  # Loop through the columns for each column
+  for(j in 1:ncity) {
+    # Fill in placeholder with cosine similarities
+    city_similarity[i, j] <- cosine_similarity(user_city_matrix[i], user_city_matrix[j])
+  }
+}
+
+# Take a peek at city 
+head(city_similarity[, 1:10])
+```
+
+Most likely city to be searched along with a given city is the city that has the highest similarity score after itself.
+
+```{r}
+likely_searches <- data.frame(City = unique_cities, stringsAsFactors = FALSE)
+
+# We are interested in the most similar city after the city itself.
+for(i in 1:length(unique_cities)){
+  cities_sorted_similarity <- names(sort(city_similarity[unique_cities[i],], decreasing = TRUE))
+  similarity <- sort(city_similarity[unique_cities[i],], decreasing = TRUE)
+  city <- cities_sorted_similarity[cities_sorted_similarity != unique_cities[i]][1]
+  likely_searches$Most_Similar[i] <- city
+  likely_searches$Similarity_score[i] <- city_similarity[unique_cities[i], city]
+}
+
+head(likely_searches)
+```
+
+# Question 3:
+
+The goal is to classify multi-city search sessions into high and low intent based on the distance between searched cities. The straight forward way to accomplish this is by finding the geographic distance between each pair of cities and then classify session based on the obtained distance between the cities. Due to lack of data on the geographic distance between cities, An in-direct method should be employed.
+
+The cosine similarity between a pair of cities, each represented by a vector in n-dimensional user session space, tends to be higher for the pair of cities that are often searched together. Conversely, the cities that are not searched together would have lower cosine similarity.
+
+If we assume that users of online travel site have a reasonable intent to travel then lower cosine similarity between the pair of cities can be viewed as a proxy for higher distance between them. The similarity score for multi-city search sessions can be calculated as the average of cosine similarities between each pair of cities.
+
+Now let us test the assumption using few examples.
+```{r}
+# Top 5 least similar cities with San Jose CA
+names(sort(city_similarity["San Jose CA", ]))[1:5]
+
+# Top 5 least similar cities with Miami FL
+names(sort(city_similarity["Miami FL", ]))[1:5]
+
+# Top 5 least similar cities with New York NY
+names(sort(city_similarity["New York NY", ]))[1:5]
+```
+
+Clearly, the least similar cities are ones from a far away state and in some cases cities from a different coast. So, Similarity can be used as a proxy for distance with an inverse relationship.
+
+Now, Computing similarity score for the multi-city sessions.
+```{r}
+
+# Define a function to compute the similarity score for the session
+session_similarity <- function(cities){
+  # Get all the cities searched
+  searched_cities <- strsplit(cities, split = ", ")[[1]]
+  # if only one city is searched then similarity is assigned 0
+  if(length(searched_cities) > 1){
+    city_pairs <- t(combn(searched_cities, 2))
+    similarity <- mean(city_similarity[city_pairs])
+  } else { similarity <- NA }
+}
+
+# Loop through all the sessions and assign session similarity
+for(i in 1:nrow(data)){
+  data$session_similarity_score[i] <- session_similarity(data$cities[i])
+}
+
+# distribution of session similarity score among sessions with more than one city being searched
+quantile(data$session_similarity_score[!is.na(data$session_similarity_score)], probs = seq(0, 1, by = 0.05))
+
+data %>%
+  filter(!is.na(session_similarity_score)) %>%
+  ggplot()+
+  geom_histogram(bins = 50, aes(x = session_similarity_score, y = ..density..))+
+  geom_density(aes(x = session_similarity_score, y = ..density..))
+```
+
+From the similarity quantiles and distribution, Looks like 0.06 is a reasonable cuttoff for session similarity that classifies 25% of multi-city sessions as low intent and 75% of them as high intent.
+
+```{r}
+data <- data %>%
+  filter(!is.na(session_similarity_score)) %>%
+  mutate(Booking_Intent = ifelse(session_similarity_score > 0.06, "High Intent", "Low Intent"))
+
+table(data$Booking_Intent)
+```
+
+For sessions with one city search, Unfortunately The data provided is not sufficient to classify them into high or low intent. However, If variables like time spent on site or clickstream behavior are provided it would be possible to classify them.

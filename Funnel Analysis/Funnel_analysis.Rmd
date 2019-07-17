@@ -244,10 +244,10 @@ errors_df <- data.frame(weights = paste0(1:9,"-",9:1), class0_error, class1_erro
 errors_df
 ```
 
-The above table shows that the optimium class wt ratio is around 6:4
+The above table shows that the optimium class wt ratio is around 1:9
  
 ```{r}
-rf.fit <- randomForest(y=train_data$converted, x = train_data[, -c(6)], ytest = test_data$converted, xtest = test_data[, -c(6)],  ntree = 150, classwt=c(6,4), mtry = 2, keep.forest = TRUE)
+rf.fit <- randomForest(y=train_data$converted, x = train_data[, -c(6)], ytest = test_data$converted, xtest = test_data[, -c(6)],  ntree = 150, classwt=c(1,9), mtry = 2, keep.forest = TRUE)
 rf.fit
 # Visualize Important variables
 varImpPlot(rf.fit)
@@ -256,7 +256,7 @@ varImpPlot(rf.fit)
 Now, lets try to build model without user_id
 
 ```{r}
-rf.fit2 <- randomForest(y=train_data$converted, x = train_data[, -c(1,6)], ytest = test_data$converted, xtest = test_data[, -c(1,6)],  ntree = 150, classwt=c(6,4), mtry = 2, keep.forest = TRUE)
+rf.fit2 <- randomForest(y=train_data$converted, x = train_data[, -c(1,6)], ytest = test_data$converted, xtest = test_data[, -c(1,6)],  ntree = 150, classwt=c(1,9), mtry = 2, keep.forest = TRUE)
 rf.fit2
 
 ```

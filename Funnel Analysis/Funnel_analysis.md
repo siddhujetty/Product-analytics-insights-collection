@@ -431,30 +431,30 @@ errors_df
     ## 9     9-1  0.000000000    1.0000000        0.9950547
 
 The above table shows that the optimium class wt ratio is around
-6:4
+1:9
 
 ``` r
-rf.fit <- randomForest(y=train_data$converted, x = train_data[, -c(6)], ytest = test_data$converted, xtest = test_data[, -c(6)],  ntree = 150, classwt=c(6,4), mtry = 2, keep.forest = TRUE)
+rf.fit <- randomForest(y=train_data$converted, x = train_data[, -c(6)], ytest = test_data$converted, xtest = test_data[, -c(6)],  ntree = 150, classwt=c(1,9), mtry = 2, keep.forest = TRUE)
 rf.fit
 ```
 
     ## 
     ## Call:
-    ##  randomForest(x = train_data[, -c(6)], y = train_data$converted,      xtest = test_data[, -c(6)], ytest = test_data$converted,      ntree = 150, mtry = 2, classwt = c(6, 4), keep.forest = TRUE) 
+    ##  randomForest(x = train_data[, -c(6)], y = train_data$converted,      xtest = test_data[, -c(6)], ytest = test_data$converted,      ntree = 150, mtry = 2, classwt = c(1, 9), keep.forest = TRUE) 
     ##                Type of random forest: classification
     ##                      Number of trees: 150
     ## No. of variables tried at each split: 2
     ## 
-    ##         OOB estimate of  error rate: 5%
+    ##         OOB estimate of  error rate: 17.73%
+    ## Confusion matrix:
+    ##       0     1 class.error
+    ## 0 48955 10409   0.1753420
+    ## 1   170   130   0.5666667
+    ##                 Test set error rate: 17.46%
     ## Confusion matrix:
     ##       0    1 class.error
-    ## 0 56641 2723  0.04586955
-    ## 1   262   38  0.87333333
-    ##                 Test set error rate: 4.6%
-    ## Confusion matrix:
-    ##       0    1 class.error
-    ## 0 29297 1287  0.04208083
-    ## 1   126   26  0.82894737
+    ## 0 25297 5287   0.1728682
+    ## 1    81   71   0.5328947
 
 ``` r
 # Visualize Important variables
@@ -467,27 +467,27 @@ Now, lets try to build model without
 user\_id
 
 ``` r
-rf.fit2 <- randomForest(y=train_data$converted, x = train_data[, -c(1,6)], ytest = test_data$converted, xtest = test_data[, -c(1,6)],  ntree = 150, classwt=c(6,4), mtry = 2, keep.forest = TRUE)
+rf.fit2 <- randomForest(y=train_data$converted, x = train_data[, -c(1,6)], ytest = test_data$converted, xtest = test_data[, -c(1,6)],  ntree = 150, classwt=c(1,9), mtry = 2, keep.forest = TRUE)
 rf.fit2
 ```
 
     ## 
     ## Call:
-    ##  randomForest(x = train_data[, -c(1, 6)], y = train_data$converted,      xtest = test_data[, -c(1, 6)], ytest = test_data$converted,      ntree = 150, mtry = 2, classwt = c(6, 4), keep.forest = TRUE) 
+    ##  randomForest(x = train_data[, -c(1, 6)], y = train_data$converted,      xtest = test_data[, -c(1, 6)], ytest = test_data$converted,      ntree = 150, mtry = 2, classwt = c(1, 9), keep.forest = TRUE) 
     ##                Type of random forest: classification
     ##                      Number of trees: 150
     ## No. of variables tried at each split: 2
     ## 
-    ##         OOB estimate of  error rate: 16.86%
+    ##         OOB estimate of  error rate: 63.29%
     ## Confusion matrix:
-    ##       0    1 class.error
-    ## 0 49450 9914   0.1670036
-    ## 1   144  156   0.4800000
-    ##                 Test set error rate: 16.98%
+    ##       0     1 class.error
+    ## 0 21652 37712   0.6352672
+    ## 1    48   252   0.1600000
+    ##                 Test set error rate: 63.05%
     ## Confusion matrix:
-    ##       0    1 class.error
-    ## 0 25440 5144   0.1681925
-    ## 1    74   78   0.4868421
+    ##       0     1 class.error
+    ## 0 11230 19354   0.6328145
+    ## 1    24   128   0.1578947
 
 There is a clear drop in overall test set accuracy by dropping user\_id.
 The optimum model should infact be rf.fit.

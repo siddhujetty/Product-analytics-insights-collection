@@ -9,10 +9,10 @@ output: rmarkdown::github_document
 
 ```{r}
 # Load required libraries
-library(dplyr)
+library(tidyverse)
 library(randomForest)
 library(lubridate)
-library(ggplot2)
+
 
 
 # Read all the .csv files in the directory
@@ -111,10 +111,17 @@ page_data %>%
 The conversion rate on Mondays is higher than any other day of the week.
 
 ```{r}
-page_data %>%
+page_week_summary <- page_data %>%
   group_by(week) %>%
   summarize(conversion_1_2 = mean(!is.na(page2)), conversion_2_3 = mean(!is.na(page3)), 
-            conversion_3_4 = mean(!is.na(page4)))
+            conversion_3_4 = mean(!is.na(page4))) 
+
+# Visualize by breaking down different page conversions
+page_week_summary %>%
+  gather(key = type, value = conversion, -week) %>%
+  
+  ggplot(aes(x = week, y = conversion, group = type)) +
+  geom_line(aes(color = type))
 ```
 
 # Model Building 

@@ -7,19 +7,25 @@ Siddhartha Jetti
 
 ``` r
 # Load required libraries
-library(dplyr)
+library(tidyverse)
 ```
 
-    ## 
-    ## Attaching package: 'dplyr'
+    ## Registered S3 methods overwritten by 'ggplot2':
+    ##   method         from 
+    ##   [.quosures     rlang
+    ##   c.quosures     rlang
+    ##   print.quosures rlang
 
-    ## The following objects are masked from 'package:stats':
-    ## 
-    ##     filter, lag
+    ## ── Attaching packages ──────────────────────────────────────────────────────────────────────────── tidyverse 1.2.1 ──
 
-    ## The following objects are masked from 'package:base':
-    ## 
-    ##     intersect, setdiff, setequal, union
+    ## ✔ ggplot2 3.1.1     ✔ purrr   0.3.2
+    ## ✔ tibble  2.1.1     ✔ dplyr   0.8.1
+    ## ✔ tidyr   0.8.3     ✔ stringr 1.4.0
+    ## ✔ readr   1.3.1     ✔ forcats 0.4.0
+
+    ## ── Conflicts ─────────────────────────────────────────────────────────────────────────────── tidyverse_conflicts() ──
+    ## ✖ dplyr::filter() masks stats::filter()
+    ## ✖ dplyr::lag()    masks stats::lag()
 
 ``` r
 library(randomForest)
@@ -36,6 +42,10 @@ library(randomForest)
     ## 
     ##     combine
 
+    ## The following object is masked from 'package:ggplot2':
+    ## 
+    ##     margin
+
 ``` r
 library(lubridate)
 ```
@@ -46,23 +56,6 @@ library(lubridate)
     ## The following object is masked from 'package:base':
     ## 
     ##     date
-
-``` r
-library(ggplot2)
-```
-
-    ## Registered S3 methods overwritten by 'ggplot2':
-    ##   method         from 
-    ##   [.quosures     rlang
-    ##   c.quosures     rlang
-    ##   print.quosures rlang
-
-    ## 
-    ## Attaching package: 'ggplot2'
-
-    ## The following object is masked from 'package:randomForest':
-    ## 
-    ##     margin
 
 ``` r
 # Read all the .csv files in the directory
@@ -243,33 +236,20 @@ page_data %>%
 The conversion rate on Mondays is higher than any other day of the week.
 
 ``` r
-page_data %>%
+page_week_summary <- page_data %>%
   group_by(week) %>%
   summarize(conversion_1_2 = mean(!is.na(page2)), conversion_2_3 = mean(!is.na(page3)), 
-            conversion_3_4 = mean(!is.na(page4)))
+            conversion_3_4 = mean(!is.na(page4))) 
+
+# Visualize by breaking down different page conversions
+page_week_summary %>%
+  gather(key = type, value = conversion, -week) %>%
+  
+  ggplot(aes(x = week, y = conversion, group = type)) +
+  geom_line(aes(color = type))
 ```
 
-    ## # A tibble: 18 x 4
-    ##     week conversion_1_2 conversion_2_3 conversion_3_4
-    ##    <dbl>          <dbl>          <dbl>          <dbl>
-    ##  1     1          0.601         0.100         0.00962
-    ##  2     2          0.596         0.103         0.00707
-    ##  3     3          0.598         0.110         0.00901
-    ##  4     4          0.597         0.110         0.00838
-    ##  5     5          0.609         0.106         0.00754
-    ##  6     6          0.606         0.104         0.00823
-    ##  7     7          0.602         0.110         0.00701
-    ##  8     8          0.609         0.106         0.00797
-    ##  9     9          0.488         0.0622        0.00470
-    ## 10    10          0.391         0.0323        0.00136
-    ## 11    11          0.398         0.0301        0.00218
-    ## 12    12          0.401         0.0244        0.00176
-    ## 13    13          0.380         0.0264        0.00194
-    ## 14    14          0.396         0.0267        0.00299
-    ## 15    15          0.409         0.0282        0.00214
-    ## 16    16          0.407         0.0235        0.00172
-    ## 17    17          0.398         0.0260        0.00132
-    ## 18    18          0.411         0.0262        0.00125
+![](Funnel_analysis_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
 
 # Model Building
 

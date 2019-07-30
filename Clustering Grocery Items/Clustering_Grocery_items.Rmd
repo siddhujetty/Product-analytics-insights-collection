@@ -1,0 +1,263 @@
+---
+title: 'Clustering Grocery Items'
+author: "Siddhartha Jetti"
+date: "7/25/2019"
+output: rmarkdown::github_document
+---
+
+# Goal
+
+Online shops often sell tons of different items and this can become messy very quickly!
+
+Data science can be extremely useful to automatically organize the products in categories so that they can be easily found by the customers.
+
+The goal of this challenge is to look at user purchase history and create categories of items that are likely to be bought together and, therefore, should belong to the same cluster.
+
+
+# Challenge Description
+
+Company XYZ is an online grocery store. In the current version of the website, they have manually grouped the items into a few categories based on their experience.
+
+However, they now have a lot of data about user purchase history. Therefore, they would like to put the data into use!
+
+This is what they asked you to do:
+
+1)The company founder wants to meet with some of the best customers to go through a focus group with them. You are asked to send the ID of the following customers to the founder:
+
+* the customer who bought the most items overall in her lifetime
+
+* for each item, the customer who bought that product the most
+
+2)Cluster items based on user co-purchase history. That is, create clusters of products that have the highest probability of being bought together. The goal of this is to replace the old/manually created categories with these new ones. Each item can belong to just one cluster.
+
+
+# Data
+
+We have 2 table downloadable by clicking on here.
+
+The 2 tables are:
+
+item_to_id - for each item, it gives the corresponding id
+
+## Columns:
+
+* Item_name : The name of the item
+* Item_id : the id of the item. Can be joined to the id in the other table. It is unique by item.
+
+purchase_history - for each user purchase, the items bought
+
+## Columns:
+
+* user_id : The id of the user.
+* id : comma-separated list of items bought together in that transaction.
+
+
+# Problem Setup
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(ggplot2)
+
+# Read and process input data into a dataframe
+items <- read.csv("item_to_id.csv", stringsAsFactors = F)
+purchases <- read.csv("purchase_history.csv", stringsAsFactors = F)
+```
+
+# Data Exploration
+
+Check data types of columns in items dataset
+```{r}
+# Check data types of each of the columns
+str(items)
+summary(items)
+```
+
+Check data types of columns in purchases dataset.
+```{r}
+# Check data types of each of the columns
+str(purchases)
+summary(purchases)
+```
+
+Check for missing values in the data
+```{r}
+# Check if any missing values exist
+colSums(is.na(items))
+
+colSums(is.na(purchases))
+```
+
+
+Check for duplicates in the data
+
+```{r}
+# check if any duplicate item id exist
+length(items$Item_id) == length(unique(items$Item_id))
+
+```
+
+```{r}
+# check if any duplicate user id exist
+length(purchases$user_id) == length(unique(purchases$user_id))
+
+```
+
+Clearly, there are duplicate user ids in purchases dataset. This is OK because single user can make multiple transactions.
+
+It is important to have an unique id for each transaction. Now lets create transaction id using the user id in purchases dataset.
+
+```{r}
+purchases <- purchases %>%
+  group_by(user_id) %>%
+  mutate(transaction_id = paste0(user_id, "_", row_number())) 
+
+# Take a peek at the data
+head(purchases)
+
+# Check if created transaction ids are unique
+length(purchases$transaction_id) == length(unique(purchases$transaction_id))
+```
+
+Overall the data looks good.
+
+# Question 1
+
+```{r}
+# Get maximum number of items purchased in a single transaction
+# This is done by counting the occurences of "," + 1
+max_items <- max(str_count(purchases$id, ",")) + 1
+```
+
+Now transform purchases dataset into tidy format for future use.
+
+```{r}
+purchases_tidy <- purchases %>%
+  separate(col = id, into = paste0("item", 1:max_items), sep = ",") %>%
+  gather(key = "value", value = "item_id", -user_id, -transaction_id) %>%
+  filter(!is.na(item_id)) %>%
+  mutate(item_id = as.integer(item_id))
+
+head(purchases_tidy)
+```
+
+Get user id that made the most number of purchases in the life time.
+
+```{r}
+most_units_bought <- purchases_tidy %>%
+  group_by(user_id) %>%
+  summarise(units_bought = n()) %>%
+  arrange(desc(units_bought)) %>%
+  filter(row_number() == 1)
+
+# user id with most number of purchases
+most_units_bought
+```
+
+Get user ids with most units bought by product.
+```{r}
+most_units_by_item <- purchases_tidy %>%
+  group_by(item_id, user_id) %>%
+  summarise(units_bought = n()) %>%
+  arrange(item_id, desc(units_bought)) %>%
+  filter(row_number() == 1) %>%
+  inner_join(items, by = c("item_id" = "Item_id")) 
+
+# user id with most number of purchases by item
+most_units_by_item
+```
+
+# Question 2
+
+Now the goal is to create clusters of items that have highest probability of being purchased together.
+
+Each grocery item can be imagined as a point in the n-dimensional space spun by transactions. Each coordinate of the point(n-dimensional) would be the number of units of the item purchased in transaction corresponding to the coordinate.
+
+```{r}
+# Build item-transaction matrix
+item_transaction_matrix <- purchases_tidy %>%
+  group_by(transaction_id, item_id) %>%
+  summarise(nunits = n()) %>%
+  ungroup() %>%
+  spread(transaction_id, nunits) %>%
+  mutate_all(list(~replace_na(., 0))) 
+
+head(item_transaction_matrix)
+```
+
+To cluster the items based on transaction history, I choose to use Kmeans clustering algorithm. Here the dataset has all the variables on the same scale and pretty much same meaning. So, I expect K-means to perform well. The advantage of using K-means is that it is highly interpretable and can easily be explained.
+
+K-means algorithm chooses the clusters such a way that within cluster variance is minimum for a given number of clusters. The optimal number of clusters is determined by running kmeans with different number of clusters and plotting the Elbow curve (within cluster variance vs number of clusters) and also results should make sense from UI standpoint without containing too many clusters.
+
+For stability, Kmeans algorithm is run multiple times for each configuration of clusters. The mean of variance is used for plotting the elbow curve.
+
+```{r}
+# Set seed
+set.seed(2019)
+# Place holder to store within variance for several configuration of clusters
+within_SS <- c()
+# Try different number of clusters
+nclusters <- 2:20
+# 10 tries for each configuration of clusters
+tries <- 10
+
+# Run Kmeans for different number of clusters
+for(i in nclusters){
+  tries_within_SS <- c()
+  # Run the Kmeans 10 times for each configuration of clusters
+  for(try in 1:tries){
+    clusters <- kmeans(item_transaction_matrix[,-1], centers = i)
+    tries_within_SS <- c(tries_within_SS, clusters$tot.withinss)
+  }
+  within_SS <- c(within_SS, mean(tries_within_SS))
+}
+```
+
+Plotting the Elbow curve.
+```{r}
+data.frame(k = nclusters, within_SS = within_SS) %>%
+  ggplot(aes(x = k, y = within_SS)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("Within Sum of Squares vs Number of Clusters")
+```
+
+Unfortunately, the above plot does not reveal an obvious "elbow" point. But there is a slight change in gradient after k=9 or 10. So, let us choose k = 9 as the optimal number of clusters.
+
+```{r}
+set.seed(2019)
+clusters <- kmeans(item_transaction_matrix[,-1], centers = 9)
+
+item_clusters <- data.frame(item_id = item_transaction_matrix[,1], cluster = clusters$cluster) %>%
+  mutate(item_id = as.integer(item_id)) %>%
+  inner_join(items, by = c("item_id" = "Item_id")) %>%
+  group_by(cluster) %>%
+  summarise(item_count = n(), items = paste0(Item_name, collapse = ", "))
+
+item_clusters
+```
+
+Looking at the item clusters.
+
+* All the vegetables except lettuce are together.
+* All fruits are grouped together.
+* All kinds of meat are together.
+* Beverages are clustered together.
+* Snacks are grouped.
+
+However, cluster 6 appears to have too many items. Lets try to re-run the algorithm by increasing the number of clusters.
+
+```{r}
+set.seed(2019)
+clusters <- kmeans(item_transaction_matrix[,-1], centers = 12)
+
+item_clusters2 <- data.frame(item_id = item_transaction_matrix[,1], cluster = clusters$cluster) %>%
+  mutate(item_id = as.integer(item_id)) %>%
+  inner_join(items, by = c("item_id" = "Item_id")) %>%
+  group_by(cluster) %>%
+  summarise(item_count = n(), items = paste0(Item_name, collapse = ", "))
+
+item_clusters2
+```
+
+Increasing the number of clusters to 12 resulted in decreasing the maximum number of items in cluster from 22 to 17. It also resulted in breaking out the milk products into different cluster and appears to be performing better than with 9 clusters.

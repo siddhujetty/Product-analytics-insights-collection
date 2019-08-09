@@ -1,0 +1,384 @@
+---
+title: 'Song Challenge'
+author: "Siddhartha Jetti"
+date: "8/4/2019"
+output: rmarkdown::github_document
+---
+
+# Goal
+
+Company XYZ is a very early stage startup. They allow people to stream music from their mobile for free. Right now, they still only have songs from the Beatles in their music collection, but they are planning to expand soon.
+
+They still have all their data in json files and they are interested in getting some basic info about their users as well as building a very preliminary song recommendation model in order to increase user engagement.
+
+# Challenge Description
+
+You are the fifth employee at company XYZ. The good news is that if the company becomes big, you will become very rich with the stocks. The bad news is that at such an early stage the data is usually very messy. All their data is stored in json format.
+
+The company CEO asked you for very specific questions:
+
+* What are the top 3 and the bottom 3 states in terms number of users?
+
+* What are the top 3 and the bottom 3 states in terms of user engagement? You can choose how to mathematically define user engagement. What the CEO cares about here is in which states users are using the product a lot/very little.
+
+* The CEO wants to send a gift to the first user who signed-up for each state. That is, the first user who signed-up from California, from Oregon, etc. Can you give him a list of those users?
+
+* Build a function that takes as an input any of the songs in the data and returns the most likely song to be listened next. That is, if, for instance, a user is currently listening to “Eight Days A Week“, which song has the highest probability of being played right after it by the same user? This is going to be V1 of a song recommendation model.
+
+* How would you set up a test to check whether your model works well?
+
+# Data
+
+The json is:
+data - Each row represents a song that was listened by a user.
+
+## Fields:
+
+id : it is unique.
+user_id : user id who listened to a given song.
+user_state : where the user is based.
+user_sign_up_date : when the user signed-up.
+song_played : the song that was listened.
+time_played : at which time the user started listening to the song (local time).
+
+# Problem Setup
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(jsonlite)
+library(lubridate)
+
+# Read in the input data into a dataframe
+songs <- fromJSON("song.json")
+```
+
+# Data Exploration and checks
+
+Check data types of columns in songs dataset
+```{r}
+# Check data types of each of the columns
+str(songs)
+```
+
+```{r}
+# take a peek at the data
+summary(songs)
+```
+
+Check for missing values in the data
+```{r}
+# Check if any missing values exist
+colSums(is.na(songs))
+```
+
+Check for duplicates in the data
+```{r}
+# check if any duplicate id exist
+length(songs$id) == length(unique(songs$id))
+```
+
+```{r}
+# check if any duplicate user id exist in the data
+length(songs$user_id) == length(unique(songs$user_id))
+```
+
+Clearly, there are duplicate user ids in dataset. This is OK because single user can listen to multiple songs.
+However, id appears to be unique.
+
+Check if dates make sense. The time played for all the entries should NOT be before the sign-up date
+
+```{r}
+all(as.Date(songs$user_sign_up_date) <= as.Date(songs$time_played))
+```
+
+Clearly, All the entries have sign-up dates before time played. Overall, the data looks OK.
+
+
+# Question 1
+
+Summarize the data by user state
+```{r}
+top3_states <- songs %>%
+  group_by(user_state) %>%
+  summarise(user_count = n_distinct(user_id)) %>%
+  ungroup() %>%
+  arrange(desc(user_count), user_state) %>%
+  filter(row_number() <= 3)
+
+bottom3_states <- songs %>%
+  group_by(user_state) %>%
+  summarise(user_count = n_distinct(user_id)) %>%
+  ungroup() %>%
+  arrange(user_count, user_state) %>%
+  filter(row_number() <= 3)
+
+top3_states
+bottom3_states
+```
+
+# Question 2
+
+Based on the given data and problem description, the only way users engage with the service is by playing songs.
+I define user engagement as number of play events per user in a given period of time. I plan to use average daily user engagement, which is average number of play events per day per user, as the metric to decide the top and bottom states for product usage. 
+
+If the users use the product a lot then number of play events per day per user would go up and hence would drive the metric up. Also, The  daily user engagement rates can be used to visualize the trends over time.
+
+The user engagement should be calculated using the number of user signups prior to the play event.
+
+The number of user sign-ups by state and date.
+```{r}
+total_signups_by_date <- songs %>%
+  arrange(user_sign_up_date) %>%
+  group_by(user_sign_up_date, user_state) %>%
+  summarize(counts = n_distinct(user_id)) %>%
+  ungroup() %>%
+  arrange(user_state, user_sign_up_date)
+
+# Unique states
+unique_states <- songs %>% 
+  select(user_state) %>%
+  distinct() %>% 
+  arrange(user_state)
+
+```
+
+The dates for which the daily engagement rate needs to be computed
+```{r}
+required_dates <- substring(songs$time_played, 1, 10) %>% unique() %>% sort()
+```
+
+Initialize a place holder to hold daily engagement rate.
+```{r}
+engagement_state_date <- data.frame(date = required_dates, stringsAsFactors = F) %>%
+  merge(unique_states)
+
+# Merge with other dataset to get the number of play events
+daily_engagement_by_state_date <- songs %>%
+  mutate(date_played = substring(time_played, 1, 10)) %>%
+  group_by(user_state, date_played) %>%
+  summarise(plays = n()) %>%
+  ungroup() %>%
+  right_join(engagement_state_date, by = c("user_state" = "user_state", "date_played" = "date")) %>%
+  mutate(plays = ifelse(is.na(plays), 0, plays), signups_till_date = NA) 
+
+head(daily_engagement_by_state_date)
+```
+
+Compute daily user engagement by state as "number of play events/ number of user sign ups till date"
+
+```{r}
+# Loop through the each of the entries
+for(i in 1:nrow(daily_engagement_by_state_date)){
+tmp <- total_signups_by_date %>%
+  filter(user_state == daily_engagement_by_state_date$user_state[i], 
+         as.Date(user_sign_up_date) <= as.Date(daily_engagement_by_state_date$date_played[i]))
+
+daily_engagement_by_state_date$signups_till_date[i] <- sum(tmp$counts)
+}
+
+daily_engagement_by_state_date <- daily_engagement_by_state_date %>%
+  mutate(daily_engagement = plays/signups_till_date) 
+
+head(daily_engagement_by_state_date)
+```
+
+```{r}
+daily_engagement_summary <- daily_engagement_by_state_date %>%
+  group_by(user_state) %>%
+  summarise(avg_daily_engagement = round(mean(daily_engagement), digits = 2)) 
+
+daily_engagement_summary
+```
+
+Top and bottom 3 states by user daily user engagement
+
+```{r}
+top3_states_engagement <- daily_engagement_summary %>%
+  arrange(desc(avg_daily_engagement)) %>%
+  filter(row_number() <= 3)
+
+bottom3_states_engagement <- daily_engagement_summary %>%
+  arrange(avg_daily_engagement) %>%
+  filter(row_number() <= 3)
+
+top3_states_engagement
+bottom3_states_engagement
+```
+
+# Question 3
+
+First users by state
+
+```{r}
+first_users_by_state <- songs %>%
+  group_by(user_state) %>%
+  arrange(user_sign_up_date) %>%
+  filter(row_number() == 1) %>%
+  ungroup() %>%
+  select(user_state, user_id) %>%
+  arrange(user_state)
+
+first_users_by_state
+```
+
+# Question 4
+
+The approach to build song recommendation system is to use first order Markov chain where for each song, we predict the most likely next song without looking at user history, but only taking into account the current song. The Markov chain approach is combined with similarity score obtained from Collaborative filtering to break any ties or for cases of cold start.
+
+The algorithm is to build a data set where for each user and song, it gives the very next song listened to. 
+We can then group by each song across all users and find the next song with the highest count in a given time window. Here, I choose the time window as one day. For every song, We are interested in finding the counterpart that is played consecutively the most number of times but on the same day across all the users. In the cases where there is a tie or missing data, the similarity using collaborative filtering is used to give the prediction.
+
+## Markov Chain
+
+```{r}
+songs <- songs %>%
+  mutate(k = 1)
+
+# Cartesian join with the same table and apply appropriate filter
+songs_joined <- songs %>%
+  select(user_id1 = user_id, song = song_played, time_played_song1 = time_played, k) %>%
+  full_join(songs, by = "k") %>%
+  # Only interested in next song played most times by that user for that day
+  filter(user_id1 == user_id, date(ymd_hms(time_played_song1)) == date(ymd_hms(time_played)),  
+         ymd_hms(time_played_song1) < ymd_hms(time_played), song != song_played) %>%
+  select(user_id, song, next_song = song_played)
+
+# Most likely next song based on Markov chain
+song_pairs <- songs_joined %>%
+  mutate(song = toupper(song), next_song = toupper(next_song)) %>%
+  group_by(song, next_song) %>%
+  summarise(counts = n()) %>%
+  ungroup() %>%
+  arrange(song, desc(counts)) 
+
+```
+
+Clearly, ties exist in the data.
+
+## Collaborative Filtering
+
+Using coll.filtering to break ties. Each song can be imagined as a point in the n-dimensional user space. Each coordinate of the point(n-dimensional) would be the number of times the song is played by the particular user.
+
+```{r}
+# Build user song matrix
+user_song_matrix <- songs %>%
+  group_by(user_id, song_played) %>%
+  summarise(nplays = n()) %>%
+  ungroup() %>%
+  spread(song_played, nplays) %>%
+  mutate_all(list(~replace_na(., 0))) %>%
+  select(-user_id)
+
+unique_songs <- colnames(user_song_matrix)
+```
+
+Cosine similarity is used to compute similarity between two songs. The idea here is if two songs are played by the same set of users, then they must be similar and have high cosine similarity value.
+
+```{r}
+# Define a function to compute the cosine similarity between two songs
+cosine_similarity <- function(x, y) { 
+  sum(x * y) / (sqrt(sum(x * x)) * sqrt(sum(y * y)))
+}
+
+# Define a place holder to hold similarity between each pair of songs
+# similarity between a song and itself is 1
+song_similarity  <- diag(1, nrow = ncol(user_song_matrix), ncol = ncol(user_song_matrix))
+rownames(song_similarity) <- toupper(unique_songs)
+colnames(song_similarity) <- toupper(unique_songs)
+nsongs <- ncol(user_song_matrix)
+```
+
+Generate song similarity matrix 
+```{r}
+# Loop through the columns
+for(i in 1:nsongs) {
+  # Loop through the columns for each column
+  for(j in 1:nsongs) {
+    # Fill in placeholder with cosine similarities
+    song_similarity[i, j] <- cosine_similarity(user_song_matrix[i], user_song_matrix[j])
+  }
+}
+
+# Process song pairs
+song_similarity_df <- song_similarity %>%
+  as.data.frame() 
+row.names(song_similarity_df) <- c()
+
+song_similarity_df$song1 <- row.names(song_similarity)
+song_similarity_df <- song_similarity_df %>%
+  select(song1, 1:100) %>%
+  gather(key = "song2", value = "similarity", -song1) %>%
+  filter(song1 != song2)
+
+# Take a peek at the song pair similarity scores
+head(song_similarity_df)
+```
+
+For every song, get the song with most counts and if multiple songs have the most counts then use highest similarity score.
+```{r}
+# summarize
+next_song <- song_pairs %>%
+  left_join(song_similarity_df, by = c("song" = "song1", "next_song" = "song2")) %>%
+  arrange(song, desc(counts), desc(similarity)) %>%
+  group_by(song) %>%
+  filter(row_number() == 1)
+```
+
+Based on the number of songs, Not all songs got a prediction on the next song to be played. For those cases, choose the song with highest similarity as the next likely song.
+```{r}
+# Get the missing songs similarity
+missing_songs <- song_similarity_df %>%
+  filter(!song1 %in% next_song$song) %>%
+  arrange(song1, desc(similarity)) %>%
+  group_by(song1) %>%
+  filter(row_number() == 1)
+
+```
+
+Combine all the predictions.
+```{r}
+# Combining  
+next_song_final <- missing_songs %>%
+  select(song = song1, next_song = song2) %>%
+  bind_rows(next_song) %>%
+  arrange(song) %>%
+  select(song, next_song)
+
+next_song_final
+```
+
+Now, Define the function to get the mostr likely next song using the above data set.
+```{r}
+# Function to get the next song
+get_next_song <- function(song){
+  if(!toupper(song) %in% next_song_final$song){
+    return("Song not found in database!")
+  }
+  return(next_song_final$next_song[next_song_final$song == toupper(song)])
+}
+
+# Test cases
+get_next_song("Eight Days A Week")
+get_next_song("XXXXXXX")
+```
+
+# Question 5
+
+Launching song recommendation system to an existing product is a major change and is likely to introduce lot of UI changes. When testing the song recommendation system, It is important to isolate the effect of UI changes from the overall change in metric before and after introducing the recommender, to know the goodness of recommender algorithm. To accomplish this we test 3 versions.
+
+V1 - original product with out recommendation.
+V2 - with recommendation and associated UI changes (recommendation based on random guess or a very rudimentary model).
+V3 - With recommendation based on the built algorithm and associated UI changes.
+
+Perform multiple A/B testing on three versions as follows.
+
+  * First estimate the number days the test needs to be run for the desired effect size, p-value and statistical power. P-value should be corrected using Boniferroni correction as multiple tests are involved.
+  * Randomly split users into three groups, Each group is shown one of the three versions to be tested.
+  * Collect data on "average number of play events per user per day" for all three groups.
+  * Here are the hypotheses to be tested. 
+    * H0 : No difference in the metric across the groups.
+    * H1 : There is a difference in the metric between the groups.
+  * After test period, perform T-test on each pair of the groups and check if you can reject or fail to reject H0 at adjusted p-value (employing Boniferroni correction) and judge the effect of recommendation algorithm.
+
+  

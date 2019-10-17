@@ -1,0 +1,244 @@
+---
+title: "Engagement Test"
+author: "Siddhartha Jetti"
+date: "October 05, 2019"
+output: rmarkdown::github_document
+---
+
+# Goal
+
+Many sites make money by selling ads. For these sites, the number of pages visited by users on each session is one of the most important metric, if not the most important metric.
+
+Data science plays a huge role here, especially by building models to suggest personalized content. In order to check if the model is actually improving engagement, companies then run A/B tests. It is often data scientist responsibility to analyze test data and understand whether the model has been successful. The goal of this project is to look at A/B test results and draw conclusions.
+
+# Challenge Description
+
+The company of this exercise is a social network. They decided to add a feature called: Recommended Friends, i.e. they suggest people you may know.
+
+A data scientist has built a model to suggest 5 people to each user. These potential friends will be shown on the user newsfeed. At first, the model is tested just on a random subset of users to see how it performs compared to the newsfeed without the new feature.
+
+The test has been running for some time and your boss asks you to check the results. You are asked to check, for each user, the number of pages visited during their first session since the test started. If this number increased, the test is a success.
+
+Specifically, your boss wants to know:
+* Is the test winning? That is, should 100% of the users see the Recommended Friends feature?
+* Is the test performing similarly for all user segments or are there differences among different segments?
+* If you identified segments that responded differently to the test, can you guess the reason? Would this change your point 1 conclusions?
+
+# Data
+
+The 2 tables are:
+
+"user_table" - info about each user sign-up date
+
+### Columns:
+* user_id : the Id of the user. It is unique by user and can be joined to user id in the other table
+* signup_date : when the user joined the social network
+    
+"test_table" - data about the test results. For each user, we only consider about how many pages she visited on Jan, 2. The first session since the date when the test started. That is, if the test started on Jan 1, and user 1 visited the site on Jan, 2 and Jan, 3, we only care about how many pages she visited on Jan, 2.
+  
+### Columns:
+* user_id : the Id of the user
+* date : the date of the first session since the test started
+* browser : user browser during that session
+* test: 1 if the user saw the new feature, 0 otherwise
+* pages_visited: the metric we care about. # of pages visited in that session
+
+# Problem Setup
+```{r}
+# Load required libraries
+library(tidyverse)
+library(ggplot2)
+
+# Read in the input data into a dataframe
+users <- read.csv("user_table.csv", stringsAsFactors = F)
+test <- read.csv("test_table.csv", stringsAsFactors = F)
+```
+
+
+# Data Exploration
+
+Explore users and test datasets
+```{r}
+# Transform variables into right format
+users <- users %>%
+  mutate(signup_date = as.Date(signup_date)) %>%
+  arrange(user_id, signup_date)
+
+# Check datatypes of all the variables in the users dataset
+str(users)
+summary(users)
+```
+
+```{r}
+# Transform variables into right format
+test <- test %>%
+  mutate(date = as.Date(date)) 
+
+# Check datatypes of all the variables in the test dataset
+str(test)
+summary(test)
+```
+
+All the columns appear to have legitimate values.
+
+```{r}
+# Merge the two datasets
+data <- users %>%
+  inner_join(test, by = "user_id") %>%
+  arrange(date, user_id)
+
+# check for any missing values in the merged dataset
+colSums(is.na(data))
+```
+
+No missing values exist anywhere in the data.
+
+```{r}
+# Take a peek at the data
+head(data)
+
+# Check if duplicates of user id exist 
+length(unique(data$user_id)) == length(data$user_id)
+```
+
+No duplicates in user id exist in the dataset.
+
+```{r}
+unique(data$date)
+
+```
+
+Based  on the sign-up date, we can know if the user is new or existing user.
+Let us classify the user as new, if he/she signed up after the start of test which is "2015-08-01".
+
+```{r}
+data <- data %>%
+  mutate(new_user = ifelse(signup_date >= as.Date("2015-08-01"), 1, 0))
+
+table(data$new_user)
+```
+
+# Question 1:
+
+Is the test winning? That is, should 100% of the users see the Recommended Friends feature?
+
+First check the mean number of pages visited across test and control groups.
+```{r}
+data_summary <- data %>%
+  group_by(test) %>%
+  summarise(avg_pages_visited = mean(pages_visited))
+  
+data_summary
+```
+
+## Check randomization
+
+To decide if the new feature is resulting in higher number of pages visited, lets run an A/B test on  the feature.
+The correctness of AB test depends hugely on assigning users  to test and control groups at random. Now, Check if users of different browsers are randomly assigned to test and control groups.
+```{r}
+data %>%
+  group_by(browser, new_user) %>%
+  summarise(prop_test = sum(test == 1)/n(), prop_control = sum(test == 0)/n())
+  
+```
+
+Based on the proportions of test and control groups, Users appears to be assigned almost randomly between test and control groups.
+
+Now, Run t.test on the test and control datasets
+
+```{r}
+t.test(data$pages_visited[data$test == 0], data$pages_visited[data$test == 1])
+```
+
+The mean of pages visited in test group is lower than the mean for the control group.
+The obtained p_value > 0.05 implies that the observed difference in sample means could have been happened out of random chance. Based on the above data, There is no reason to believe that the two groups are different and the feature should not be launched for all the users.
+
+# Question 2:
+
+Is the test performing similarly for all user segments or are there differences among different segments?
+
+First, Lets plot the mean number of pages visited vs the user browser. 
+```{r}
+# Summarize data by test and control groups
+data_test_by_browser = data %>%
+                    group_by(browser) %>%
+                    summarize(Test = mean(pages_visited[test==1]), Control = mean(pages_visited[test==0]))
+
+data_test_by_browser
+
+# Plot the data
+data_test_by_browser %>%
+  gather(key = treatment, value = mean_pages, -browser) %>%
+ggplot(aes(x = browser, y = mean_pages, group = treatment, color = treatment)) +
+  geom_line() +
+  geom_point()
+```
+
+The average of number of pages visited for test group among users coming from Opera browser is 0. Something wrong with data.
+
+The average number of pages visited vs new user
+```{r}
+# Summarize data in test and control groups based on new user
+data %>%
+  group_by(new_user) %>%
+  summarize(Test = mean(pages_visited[test==1]), Control = mean(pages_visited[test==0]))
+```
+
+Check the means test vs control for different segments.
+
+```{r}
+data %>%
+  mutate(new_user = as.factor(new_user)) %>%
+  group_by(browser, new_user) %>%
+  summarize(test_control_ratio  =  mean(pages_visited[test == 1])/mean(pages_visited[test == 0])) %>%
+  ggplot(aes(x = browser, y  = test_control_ratio, color = new_user, group = new_user)) +
+  geom_line() +
+  geom_point()
+```
+
+The plot above reveals the following :
+
+* The average number of pages visited for test group among users from Opera browser is 0.
+
+* For new users, The test group is consistently underperforming (ratio of test vs control less than 1) compared to control group for all browsers with exception of Opera. 
+
+* For existing users, The test is performing better that control, ratio more than 1, for all browsers except Opera.
+
+Lets run the t-test by segment.
+
+```{r}
+data %>%
+  group_by(browser, new_user) %>%
+  summarise(Test = mean(pages_visited[test == 1]), Control = mean(pages_visited[test == 0]),
+            Diff = Test - Control,
+            p_value = t.test(pages_visited[test == 1], pages_visited[test == 0])$p.value) 
+```
+
+Based on the test-control differences and p-values, Clearly the test is performing differently among different segments.
+
+# Question 3:
+
+If you identified segments that responded differently to the test, can you guess the reason? Would this change your point 1 conclusions?
+
+
+The above results can be more or less repeated by the  multiple linear regression.
+```{r}
+
+# Simple Linear regression
+model <- lm(pages_visited ~ test, data)
+summary(model)
+
+# Multiple linear regression controlling for the  browser and test
+model <- lm(pages_visited ~ browser + test + new_user, data)
+summary(model)
+```
+
+The potential reasons for the observed differences across segments are:
+
+* The mean number of pages visited for the test group among users coming from Opera browser being 0 doesn't make sense. Clearly, there is a problem with loging system or a technical glitch that is preventing users to browse after implementing the friend recommendation feature for Opera browser. 
+
+* Clearly the friend recommendation feature is experiencing cold start problem. The new users donot have any friends and recommendation is pretty much based on a random guess. It is possible that these random friend recommendations are turning off new users and resulting in fewer number of pages visited.
+
+* The performance of feature on existing users reveals that after the user data is collected the recommendation feature is able to recommend relevant friends.
+
+The above findings would not change conclusion from question 1, as the test hypothesis when we designed the test  was to test for all the users. The next step would be to fix the issue with the Opera browser and re-run the test to make decision whether or not to implement the feature for all the users.
